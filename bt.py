@@ -48,20 +48,15 @@ def get_stock(ticker, date):
 	return {'open': res[0], 'close': res[3]}
 
 
-def noop_engine(input_portfolio, date):
-	return input_portfolio
+def noop_engine(portfolio, date):
+	return portfolio
 
 
-def basic_stock_engine(input_portfolio, date, ticker='aapl'):
+def basic_stock_engine(portfolio, date, ticker='aapl'):
 	'''
 	if more spare cash than purchase price, purchase as much as i can
 	subtract from cash wallet
 	'''
-	# if we don't create a deep copy, we may modify the referenced portfolio belonging to a different algo
-	# i.e. each portfolio was initialized pointing to an empty cash wallet. they each actually point to a single
-	# dictionary in memory, several keys to the same value. so to reassign one value without making a copy will edit
-	# the referenced dictionary that all keys point to
-	portfolio = input_portfolio.copy()
 	stock = get_stock(ticker, date)
 	if portfolio['cash'] > stock['close']:
 		units_to_buy = portfolio['cash'] // stock['close']
@@ -72,9 +67,17 @@ def basic_stock_engine(input_portfolio, date, ticker='aapl'):
 	return portfolio
 
 
-def calculate_portfolio_value(portfolio):
-	# todo
-	return
+def calculate_portfolio_value(portfolio, date):
+	total = 0
+	total += portfolio['cash']
+	for ticker in portfolio:
+		if ticker == 'cash':
+			continue
+		else:
+			closing_price_on_date = si.get_data(ticker, start_date = date.strftime("%m-%d-%Y"), end_date = (date + timedelta(days=1)).strftime("%m-%d-%Y")).values.tolist()[0][3]
+			shares = portfolio[ticker]['shares']
+			total += (closing_price_on_date * shares)
+	return total
 
 
 class Backtester:
@@ -87,13 +90,14 @@ class Backtester:
 		self.run = False
 		# initialize portfolios for each algo { 'algo1': {'cash': 1000}, 'algo2': {'cash': 1000}}
 		default_portfolio = {'cash': starting_wallet}
-		self.portfolios = dict.fromkeys([algo.name for algo in self.algos], default_portfolio)
+		#self.portfolios = dict.fromkeys([algo.name for algo in self.algos], default_portfolio)
+		self.portfolios = {algo.name: {'cash': starting_wallet} for algo in self.algos}
 		# todo, initialize a log of the portfolio values end of each day
 		# dates is an array, the xs
 		# then make several values arrays, one for each algo. probly 
-		#self.dates = []
-		#self.portfolio_values = dict.fromkeys([algo.name for algo in self.algos], [])
-		# need to watch out for editing this one too and overwriting
+		self.dates = []
+		self.portfolio_values = {algo.name: [] for algo in self.algos}
+		# need to watch out for editing this one too and overwriting them all by accident
 		
 
 	def backtest(self):
@@ -101,36 +105,26 @@ class Backtester:
 		delta = timedelta(days=1)
 		while self.start_date < self.end_date:
 			print(self.start_date.strftime("%m-%d-%Y"))
-
+			
 			try:
 				# check if valid trading day
 				test_data = si.get_data("amzn", start_date = self.start_date.strftime("%m-%d-%Y"), end_date = (self.start_date + delta).strftime("%m-%d-%Y"))
 
+				self.dates.append(self.start_date)
+				
 				for algo in self.algos:
-					print(algo.name)
+					# run engine and update portfolio for this day
 					self.portfolios[algo.name] = algo.decision_engine(self.portfolios[algo.name], self.start_date)
-					print(self.portfolios)
-				'''
-				input from portfolio_map -> algo.decision_engine -> output
-				write outtput to the portfolios map
-				log change in final price
-				'''
+					# log the portfolio value
+					self.portfolio_values[algo.name].append(calculate_portfolio_value(self.portfolios[algo.name], self.start_date))
+
 			except:
 				# not a valid trading day
-				pass 
-				
+				pass
+
+			
 			self.start_date += delta
 		
-
-
-		'''
-		while tradeable day and <= end date
-			for algo in algos
-				input_from_potfolio_map->algo.decision_engine->output
-				write output to porfolios_map
-				log change in final price
-			inc day
-		'''
 		self.run = True
 		return
 
@@ -153,10 +147,12 @@ class Backtester:
 
 		# plot algos
 		xs = [datetime(2005, 2, 1), datetime(2005, 2, 15), datetime(2005, 3, 1), datetime(2005, 3, 22), datetime(2005, 4, 1)]
-		ax.plot(xs, [1,2,3,4,5], marker='', color=palette(1), linewidth=1, alpha=0.9, label='first')
-		ax.plot(xs, [1,4,3,3,2], marker='', color=palette(2), linewidth=2, alpha=0.9, label='second')
+		#ax.plot(xs, [1,2,3,4,5], marker='', color=palette(1), linewidth=1, alpha=0.9, label='first')
+		#ax.plot(xs, [1,4,3,3,2], marker='', color=palette(2), linewidth=2, alpha=0.9, label='second')
+		ax.plot(self.dates, self.portfolio_values['nop'], marker='', color=palette(1), linewidth=1, alpha=0.9, label='first')
+		ax.plot(self.dates, self.portfolio_values['aapl'], marker='', color=palette(2), linewidth=2, alpha=0.9, label='second')
 		plt.legend(loc=2, ncol=2) # legend top left
-		#plt.show()
+		plt.show()
 
 		return
 
@@ -166,7 +162,7 @@ class Backtester:
 
 
 start = '1-12-2021'
-end = '1-16-2021'
+end = '1-26-2021'
 algos = [Algo('nop', noop_engine), Algo('aapl', basic_stock_engine)]
 starting_funds = 2000
 
