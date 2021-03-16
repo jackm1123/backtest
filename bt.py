@@ -1,8 +1,3 @@
-'''
-i fixed the cluster buy with a try catch on the get_stock usage.
-now i need to add the stop loss and stop gain parameters
-'''
-
 import matplotlib.pyplot as plt
 import matplotlib.dates as mdates
 from datetime import datetime, timedelta
@@ -10,12 +5,14 @@ import yahoo_fin.stock_info as si
 import requests
 from bs4 import BeautifulSoup
 
+# ---------------------------
+# CLASSES
+# ---------------------------
+
 '''
 Algo class. Initialized with a (string) name, and a (function) decision_engine
 The decision_engine is a function that takes in a given portfolio dict and datetime date 
 and decides what to do on that given date, whether to buy, sell, do nothing, etc.
-
-need openinsider to not consider stocks like lmaca
 '''
 class Algo:
 	def __init__(self, name, decision_engine):
@@ -23,7 +20,7 @@ class Algo:
 		self.name = name
 
 '''
-Portfolio
+Portfolio object format
 {
 	'amzn' : {
 		'shares' : '10',
@@ -32,7 +29,6 @@ Portfolio
 	'cash' : 2000
 }
 '''
-
 
 # ---------------------------
 # UTILITY FUNCTIONS
@@ -58,6 +54,17 @@ def sma(ticker, interval, date):
 	closes = []
 	for result in res:
 		closes.append(result[3])
+	return sum(closes) / len(closes)
+
+def sma_volume(ticker, interval, date):
+	# we call this on a specific trading day, we can only know the SMA of the previous X days. So technically this is 
+	# the SMA of the previous day using the close prices
+	# fetch the last 12 days to be safe and not miss data from holidays and weekends
+	# we'll take only the last 5
+	res = si.get_data(ticker, start_date = (date - timedelta(days=12)).strftime("%m-%d-%Y"), end_date = date.strftime("%m-%d-%Y")).values.tolist()[-interval:]
+	closes = []
+	for result in res:
+		closes.append(result[5])
 	return sum(closes) / len(closes)
 
 def get_openinsider(url):
@@ -99,6 +106,35 @@ def limit_sells(portfolio, date, stop_loss, stop_gain):
 				portfolio['cash'] += holdings['shares'] * stock['close']
 	return portfolio
 
+
+def sell(portfolio, ticker, shares, sell_price):
+	try:
+		if portfolio[ticker]['shares'] - shares < 0:
+			print('Cannot sell that many shares')
+		else:
+			portfolio[ticker]['shares'] -= shares
+			portfolio['cash'] += shares * sell_price
+	except:
+		print("Don't own the stock trying to be sold")
+	finally:
+		return portfolio
+
+def sell_all(portfolio, ticker, sell_price):
+	try:
+		holdings = portfolio.pop(ticker)
+		portfolio['cash'] += holdings['shares'] * stock['open']
+	except:
+		print("Don't own the stock trying to be sold")
+	finally:
+		return portfolio
+
+def buy(portfolio, ticker, shares, purchase_price):
+	pass
+	#todo
+
+
+
+
 '''
 calculate_portfolio_value function returns the total portfolio worth at close on given date
 (dict) portfolio, (datetime) date -> (float) total
@@ -119,15 +155,21 @@ def calculate_portfolio_value(portfolio, date):
 # INDICATORS
 # ---------------------------
 
-
-def indicator1(date):
-	# if the 5-day SPY SMA is increasing return true
+'''
+if the 5-day SPY SMA is increasing return true
+'''
+def fiveday_spy_sma_3_apart_indicator(date):
 	return (sma('spy', 5, date) - sma('spy', 5, date - timedelta(days=2))) > 0
+
+'''
+if the 5-day SPY SMA volume is increasing return true
+'''
+def fiveday_spy_vol_sma_3_apart_indicator(date):
+	return (sma_volume('spy', 5, date) - sma_volume('spy', 5, date - timedelta(days=2))) > 0
 
 # ---------------------------
 # DECISION ENGINES
 # ---------------------------
-
 
 '''
 sample decision_engine no-op
@@ -176,6 +218,8 @@ def openinsider_cluster_stock_engine(pf, date, stop_loss=0.05, stop_gain=0.02):
 
 def openinsider_cluster_stock_engine2(pf, date, stop_loss=0.05, stop_gain=0.02):
 	portfolio = limit_sells(pf, date, stop_loss, stop_loss)
+	if not fiveday_spy_vol_sma_3_apart_indicator(date):
+		return portfolio
 	date2 = date.strftime("%m-%d-%Y").replace('-', '%2F')
 	date1 = (date - timedelta(days=2)).strftime("%m-%d-%Y").replace('-', '%2F')
 	url = "http://openinsider.com/screener?s=&o=&pl=3&ph=&ll=&lh=&fd=90&fdr=&td=-1&tdr=" + date1 + "+-+" + date2 + "&fdlyl=&fdlyh=&daysago=&xp=1&vl=&vh=&ocl=&och=&sic1=-1&sicl=100&sich=9999&isofficer=1&iscob=1&isceo=1&ispres=1&iscoo=1&iscfo=1&isgc=1&isvp=1&grp=2&nfl=&nfh=&nil=4&nih=&nol=0&noh=&v2l=&v2h=&oc2l=&oc2h=&sortcol=0&cnt=100&page=1"
@@ -189,25 +233,71 @@ def openinsider_cluster_stock_engine3(pf, date, stop_loss=0.02, stop_gain=0.02):
 	portfolio = limit_sells(pf, date, stop_loss, stop_loss)
 	date2 = date.strftime("%m-%d-%Y").replace('-', '%2F')
 	date1 = (date - timedelta(days=2)).strftime("%m-%d-%Y").replace('-', '%2F')
-	url = "http://openinsider.com/screener?s=&o=&pl=&ph=5&ll=&lh=&fd=14&fdr=&td=-1&tdr=" + date1 + "+-+" + date2 + "&fdlyl=&fdlyh=&daysago=&xp=1&vl=&vh=&ocl=&och=&sic1=-1&sicl=100&sich=9999&isofficer=1&iscob=1&isceo=1&ispres=1&iscoo=1&iscfo=1&isgc=1&isvp=1&grp=0&nfl=&nfh=&nil=&nih=&nol=&noh=&v2l=&v2h=&oc2l=&oc2h=&sortcol=8&cnt=100&page=1"
+	url = "http://openinsider.com/screener?s=&o=&pl=&ph=5&ll=&lh=&fd=0&fdr=&td=-1&tdr=" + date1 + "+-+" + date2 + "&fdlyl=&fdlyh=&daysago=&xp=1&vl=&vh=&ocl=&och=&sic1=-1&sicl=100&sich=9999&isofficer=1&iscob=1&isceo=1&ispres=1&iscoo=1&iscfo=1&isgc=1&isvp=1&grp=0&nfl=&nfh=&nil=&nih=&nol=&noh=&v2l=&v2h=&oc2l=&oc2h=&sortcol=8&cnt=100&page=1"
 	stock = get_openinsider(url)
 	if stock != '':
 		return basic_stock_engine(portfolio, date, stock)
 	else:
 		return portfolio
 
-def openinsider_cluster_stock_engine4(pf, date, stop_loss=0.04, stop_gain=0.4):
+def openinsider_cluster_stock_engine4(pf, date, stop_loss=0.05, stop_gain=0.02):
 	portfolio = limit_sells(pf, date, stop_loss, stop_loss)
-	if not indicator1(date):
-		return portfolio
 	date2 = date.strftime("%m-%d-%Y").replace('-', '%2F')
 	date1 = (date - timedelta(days=2)).strftime("%m-%d-%Y").replace('-', '%2F')
-	url = "http://openinsider.com/screener?s=&o=&pl=&ph=5&ll=&lh=&fd=14&fdr=&td=-1&tdr=" + date1 + "+-+" + date2 + "&fdlyl=&fdlyh=&daysago=&xp=1&vl=&vh=&ocl=&och=&sic1=-1&sicl=100&sich=9999&isofficer=1&iscob=1&isceo=1&ispres=1&iscoo=1&iscfo=1&isgc=1&isvp=1&grp=0&nfl=&nfh=&nil=&nih=&nol=&noh=&v2l=&v2h=&oc2l=&oc2h=&sortcol=8&cnt=100&page=1"
+	url = "http://openinsider.com/screener?s=&o=&pl=&ph=50&ll=&lh=&fd=0&fdr=&td=-1&tdr=" + date1 + "+-+" + date2 + "&fdlyl=&fdlyh=&daysago=&xp=1&vl=&vh=&ocl=&och=&sic1=-1&sicl=100&sich=9999&isofficer=1&iscob=1&isceo=1&ispres=1&iscoo=1&iscfo=1&isgc=1&isvp=1&grp=0&nfl=&nfh=&nil=&nih=&nol=&noh=&v2l=&v2h=&oc2l=&oc2h=&sortcol=8&cnt=100&page=1"
 	stock = get_openinsider(url)
 	if stock != '':
 		return basic_stock_engine(portfolio, date, stock)
 	else:
-		return portfolio	
+		return portfolio
+
+def openinsider_cluster_stock_engine5(pf, date, stop_loss=0.08, stop_gain=0.05):
+	portfolio = limit_sells(pf, date, stop_loss, stop_loss)
+	date2 = date.strftime("%m-%d-%Y").replace('-', '%2F')
+	date1 = (date - timedelta(days=2)).strftime("%m-%d-%Y").replace('-', '%2F')
+	url = "http://openinsider.com/screener?s=&o=&pl=&ph=5&ll=&lh=&fd=0&fdr=&td=-1&tdr=" + date1 + "+-+" + date2 + "&fdlyl=&fdlyh=&daysago=&xp=1&vl=&vh=&ocl=&och=&sic1=-1&sicl=100&sich=9999&isofficer=1&iscob=1&isceo=1&ispres=1&iscoo=1&iscfo=1&isgc=1&isvp=1&grp=0&nfl=&nfh=&nil=&nih=&nol=&noh=&v2l=&v2h=&oc2l=&oc2h=&sortcol=8&cnt=100&page=1"
+	stock = get_openinsider(url)
+	if stock != '':
+		return basic_stock_engine(portfolio, date, stock)
+	else:
+		return portfolio
+
+def openinsider_cluster_stock_engine6(pf, date, stop_loss=0.05, stop_gain=0.02):
+	portfolio = limit_sells(pf, date, stop_loss, stop_loss)
+	date2 = date.strftime("%m-%d-%Y").replace('-', '%2F')
+	date1 = (date - timedelta(days=2)).strftime("%m-%d-%Y").replace('-', '%2F')
+	url = "http://openinsider.com/screener?s=&o=&pl=&ph=5&ll=&lh=&fd=0&fdr=&td=-1&tdr=" + date1 + "+-+" + date2 + "&fdlyl=&fdlyh=&daysago=&xp=1&vl=&vh=&ocl=&och=&sic1=-1&sicl=100&sich=9999&isofficer=1&iscob=1&isceo=1&ispres=1&iscoo=1&iscfo=1&isgc=1&isvp=1&grp=0&nfl=&nfh=&nil=&nih=&nol=&noh=&v2l=&v2h=&oc2l=&oc2h=&sortcol=8&cnt=100&page=1"
+	stock = get_openinsider(url)
+	if stock != '':
+		return basic_stock_engine(portfolio, date, stock)
+	else:
+		return portfolio
+
+
+def openinsider_cluster_stock_engine7(pf, date, stop_loss=0.05, stop_gain=0.02):
+	portfolio = limit_sells(pf, date, stop_loss, stop_loss)
+	date2 = date.strftime("%m-%d-%Y").replace('-', '%2F')
+	date1 = (date - timedelta(days=2)).strftime("%m-%d-%Y").replace('-', '%2F')
+	url = "http://openinsider.com/screener?s=&o=&pl=&ph=6&ll=&lh=&fd=0&fdr=&td=-1&tdr=" + date1 + "+-+" + date2 + "&fdlyl=&fdlyh=&daysago=&xp=1&vl=&vh=&ocl=&och=&sic1=-1&sicl=100&sich=9999&isofficer=1&iscob=1&isceo=1&ispres=1&iscoo=1&iscfo=1&isgc=1&isvp=1&grp=2&nfl=&nfh=&nil=3&nih=&nol=0&noh=&v2l=&v2h=&oc2l=&oc2h=&sortcol=8&cnt=100&page=1"
+	stock = get_openinsider(url)
+	if stock != '':
+		return basic_stock_engine(portfolio, date, stock)
+	else:
+		return portfolio
+
+def openinsider_cluster_stock_engine8(pf, date, stop_loss=0.05, stop_gain=0.02):
+	portfolio = limit_sells(pf, date, stop_loss, stop_loss)
+	if not fiveday_spy_sma_3_apart_indicator(date):
+		return portfolio
+	date2 = date.strftime("%m-%d-%Y").replace('-', '%2F')
+	date1 = (date - timedelta(days=2)).strftime("%m-%d-%Y").replace('-', '%2F')
+	url = "http://openinsider.com/screener?s=&o=&pl=&ph=5&ll=&lh=&fd=0&fdr=&td=-1&tdr=" + date1 + "+-+" + date2 + "&fdlyl=&fdlyh=&daysago=&xp=1&vl=&vh=&ocl=&och=&sic1=-1&sicl=100&sich=9999&isofficer=1&iscob=1&isceo=1&ispres=1&iscoo=1&iscfo=1&isgc=1&isvp=1&grp=0&nfl=&nfh=&nil=&nih=&nol=&noh=&v2l=&v2h=&oc2l=&oc2h=&sortcol=8&cnt=100&page=1"
+	stock = get_openinsider(url)
+	if stock != '':
+		return basic_stock_engine(portfolio, date, stock)
+	else:
+		return portfolio
+		
 '''
 theres a lot of room to fiddle arround with adding overrall market indicator flags, sort by different things, different stop limits
 zacks doesn't look accessible, but maybe i could use a stock screener for undersold and highest volume
@@ -290,8 +380,8 @@ class Backtester:
 if __name__ == '__main__':
 	# could make these dates and starting funds command line arguments
 	start = '1-01-2021'
-	end = '2-28-2021'
-	algos = [Algo('nop', noop_engine), Algo('spy', basic_stock_engine), Algo('msft', basic_msft_stock_engine), Algo('arkk', basic_arkk_stock_engine), Algo('cluster insider', openinsider_cluster_stock_engine), Algo('cluster insider2', openinsider_cluster_stock_engine2), Algo('cluster3', openinsider_cluster_stock_engine3), Algo('cluster4', openinsider_cluster_stock_engine4)]
+	end = '3-05-2021'
+	algos = [Algo('nop', noop_engine), Algo('spy', basic_stock_engine), Algo('arkk', basic_arkk_stock_engine), Algo('cluster3', openinsider_cluster_stock_engine3), Algo('cluster4', openinsider_cluster_stock_engine4), Algo('cluster5', openinsider_cluster_stock_engine5), Algo('cluster6', openinsider_cluster_stock_engine6), Algo('cluster7', openinsider_cluster_stock_engine7), Algo('cluster8', openinsider_cluster_stock_engine8)]
 	starting_funds = 2000
 
 	bt = Backtester(start, end, algos, starting_funds)
@@ -304,48 +394,6 @@ if __name__ == '__main__':
 
 
 '''
-notes:
-a good decision engine has to decide when to buy/sell or do nothing
-it also has to decide what to buy sell
-deciding what can be very creative
-deciding when likely would be stop losses/gains or general market/sector indicators
-
-also keep track of number of trades for profit and trades for loss? would be good to see what percentage of trades end up postive
-
-http://openinsider.com/latest-cluster-buys
-http://openinsider.com/screener?s=&o=&pl=3&ph=&ll=&lh=&fd=90&fdr=&td=-1&tdr=01%2F18%2F2021+-+02%2F17%2F2021&fdlyl=&fdlyh=6&daysago=&xp=1&vl=25&vh=&ocl=1&och=&sic1=-1&sicl=100&sich=9999&grp=2&nfl=&nfh=&nil=5&nih=&nol=1&noh=&v2l=&v2h=&oc2l=&oc2h=&sortcol=0&cnt=100&page=1
-https://github.com/mariostoev/finviz
-
-
-strategies:
--------------------
-all this finviz's
-openinsider clusterbuy (ins >4)
-openinside under 5 also
-https://www.reddit.com/r/rhbets/comments/9pay25/openinsidercom_is_a_great_tool_for_monitoring/
-https://www.reddit.com/r/options/comments/je509j/insider_trading_program/
-compare with arkk
-compare with arkw
-
-http://openinsider.com/screener?s=&o=&pl=3&ph=&ll=&lh=&fd=90&fdr=&td=-1&tdr=01%2F18%2F2021+-+02%2F17%2F2021&fdlyl=&fdlyh=6&daysago=&xp=1&vl=25&vh=&ocl=1&och=&sic1=-1&sicl=100&sich=9999&grp=2&nfl=&nfh=&nil=5&nih=&nol=1&noh=&v2l=&v2h=&oc2l=&oc2h=&sortcol=0&cnt=100&page=1
-
-use beautiful soup for the openinsider
-
-
-
-
-
-
-
-
-
-
-under 50 dollar stocks
-
-buy right before close
-set up a stop loss for losing 5% and a limit sell for gaining 10%
-if its been a day and low change, then market sell
-
 
 trending up
 1. 
@@ -408,74 +456,4 @@ Performance 2 -5%
 Avg True Range Over 0.25
 Average Volume OVer 200k
 Change Down
-
-
-
-
-'''
-
-
-
-'''
-
-
-
-def finviz_screener(num=5, sort_by='volume', url=None):
-	# sort by volume, change, price, perf13w, perf4w, perf1w
-	if url == None:
-		url = 'https://finviz.com/screener.ashx?v=141&f=sh_price_u50,sh_relvol_o1,ta_change_u,ta_perf_1wup,ta_sma20_pa,ta_sma200_pa,ta_sma50_pa&ft=4&o=-' + sort_by
-	stock_list = Screener.init_from_url(url, num).data
-	tickers_to_buy = [stock['Ticker'] for stock in stock_list]
-	return tickers_to_buy
-	# returns a list of dicts representing table
-	# {'No.': '1', 'Ticker': 'ECOR', 'Perf Week': '6.45%', 'Perf Month': '-1.86%', 'Perf Quart': '77.18%', 'Perf Half': '60.00%', 'Perf Year': '261.59%', 'Perf YTD': '69.23%', 'Volatility W': '19.52%', 'Volatility M': '11.87%', 'Recom': '2.00', 'Avg Volume': '1.75M', 'Rel Volume': '80.01', 'Price': '2.64', 'Change': '21.66%', 'Volume': '140,165,494'}
-
-def basic_finviz_stock_engine(portfolio, date, stop_loss=0.1, stop_gain=0.2, num=5):
-	
-	# after that, at end of day, check if money available
-	# if we do, use the finfiz api and decide if the contents look good enough (they may not and we may not buy anything)
-	# otherwise, dont bother using api and skip over
-
-	# sell at open or close if we hit the limit loss or gain
-	for ticker in portfolio:
-		if ticker != 'cash':
-			stock = get_stock(ticker, date)
-			if (stock['open'] < (1 - stop_loss) * portfolio[ticker]['purchase_price']) or (stock['open'] > (1 + stop_gain) * portfolio[ticker]['purchase_price']):
-				# sell at open
-				holdings = portfolio.pop(ticker)
-				portfolio['cash'] += holdings['shares'] * stock['open']
-			elif (stock['close'] < (1 - stop_loss) * portfolio[ticker]['purchase_price']) or (stock['close'] > (1 + stop_gain) * portfolio[ticker]['purchase_price']):
-				# sell at close
-				holdings = portfolio.pop(ticker)
-				portfolio['cash'] += holdings['shares'] * stock['close']
-	
-	# at the end of the day, take the cash we have around, divide by number, and buy the finviz stocks
-	# after that, take whatever cash is left from those splits, pool it, buy the top choice
-	liquid_cash = portfolio['cash']
-	cash_for_each = liquid_cash / num
-	tickers_to_buy = finviz_screener(5)
-	top_ticker = tickers_to_buy[0]
-	top_ticker_prices = None
-	for ticker in tickers_to_buy:
-		stock = get_stock(ticker, date)
-		if ticker == top_ticker:
-			top_ticker_prices = stock
-		if cash_for_each > stock['close']:
-			units_to_buy = cash_for_each // stock['close']
-			# if we buy a stock that already exists, average the purchase price and add the shares
-			if portfolio[ticker]:
-				portfolio[ticker] = {'shares': units_to_buy + portfolio[ticker]['shares'], 'purchase_price': (stock['close'] * units_to_buy + portfolio[ticker]['purchase_price'] * portfolio[ticker]['shares']) / (units_to_buy + portfolio[ticker]['shares'])}
-			else:
-				portfolio[ticker] = {'shares': units_to_buy, 'purchase_price': stock['close']}
-			portfolio['cash'] -= (units_to_buy * stock['close'])
-
-	if portfolio['cash'] > top_ticker_prices['close']:
-		units_to_buy = portfolio['cash'] // top_ticker_prices['close']
-		portfolio[ticker] = {'shares': units_to_buy, 'purchase_price': stock['close']}
-		portfolio['cash'] -= (units_to_buy * stock['close'])
-
-	print(portfolio)
-	return portfolio
-
-
 '''
